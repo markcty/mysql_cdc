@@ -1,3 +1,5 @@
+#![allow(dead_code)]
+
 /// Server and client capability flags
 /// <a href="https://mariadb.com/kb/en/library/connection/#capabilities">See more</a>
 

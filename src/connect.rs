@@ -1,4 +1,4 @@
-use openssl::rsa::{Padding, Rsa};
+use mysql_common::crypto;
 
 use crate::binlog_client::BinlogClient;
 use crate::commands::auth_plugin_switch_command::AuthPluginSwitchCommand;
@@ -8,11 +8,11 @@ use crate::constants::auth_plugin_names::AuthPlugin;
 use crate::constants::database_provider::DatabaseProvider;
 use crate::constants::{auth_plugin_names, capability_flags, NULL_TERMINATOR, UTF8_MB4_GENERAL_CI};
 use crate::errors::Error;
-use crate::extensions::{check_error_packet, xor};
+use crate::extensions::check_error_packet;
 use crate::packet_channel::PacketChannel;
 use crate::responses::auth_switch_packet::AuthPluginSwitchPacket;
 use crate::responses::handshake_packet::HandshakePacket;
-use crate::responses::response_type::ResponseType;
+use crate::responses::response_type;
 use crate::ssl_mode::SslMode;
 
 impl BinlogClient {
@@ -58,8 +58,8 @@ impl BinlogClient {
         check_error_packet(&packet, "Authentication error.")?;
 
         match packet[0] {
-            ResponseType::OK => return Ok(()),
-            ResponseType::AUTH_PLUGIN_SWITCH => {
+            response_type::OK => return Ok(()),
+            response_type::AUTH_PLUGIN_SWITCH => {
                 let switch_packet = AuthPluginSwitchPacket::parse(&packet[1..])?;
                 self.handle_auth_plugin_switch(channel, switch_packet, seq_num + 1, use_ssl)?;
                 Ok(())
@@ -139,17 +139,16 @@ impl BinlogClient {
 
         // Extract public key.
         let public_key = &packet[1..];
-        let encrypted_password = xor(&password, &scramble.as_bytes());
 
-        let rsa = Rsa::public_key_from_pem(public_key)?;
-        let mut encrypted_body = vec![0u8; rsa.size() as usize];
-        rsa.public_encrypt(
-            &encrypted_password,
-            &mut encrypted_body,
-            Padding::PKCS1_OAEP,
-        )?;
+        let nonce = scramble.as_bytes();
 
-        channel.write_packet(&encrypted_body, seq_num + 1)?;
+        for (i, c) in password.iter_mut().enumerate() {
+            *(c) ^= nonce[i % nonce.len()];
+        }
+
+        let encrypted_pass = crypto::encrypt(&password, public_key);
+
+        channel.write_packet(&encrypted_pass, seq_num + 1)?;
         let (packet, _seq_num) = channel.read_packet()?;
         check_error_packet(&packet, "Authentication error.")?;
         Ok(())
