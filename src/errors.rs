@@ -1,43 +1,20 @@
 use std::{io, num::ParseIntError, str::Utf8Error, string::FromUtf8Error};
 
 use hex::FromHexError;
+use thiserror::Error;
 
-#[derive(Debug)]
+#[derive(Debug, Error)]
 pub enum Error {
-    IoError(io::Error),
-    Utf8Error(Utf8Error),
-    FromUtf8Error(FromUtf8Error),
-    FromHexError(FromHexError),
-    ParseIntError(ParseIntError),
+    #[error("io error, {0}")]
+    IoError(#[from] io::Error),
+    #[error("utf8 error, {0}")]
+    Utf8Error(#[from] Utf8Error),
+    #[error("can't convert from utf8, {0}")]
+    FromUtf8Error(#[from] FromUtf8Error),
+    #[error("can't convert from hex, {0}")]
+    FromHexError(#[from] FromHexError),
+    #[error("can't parse int, {0}")]
+    ParseIntError(#[from] ParseIntError),
+    #[error("{0}")]
     String(String),
-}
-
-impl From<io::Error> for Error {
-    fn from(error: io::Error) -> Self {
-        Error::IoError(error)
-    }
-}
-
-impl From<Utf8Error> for Error {
-    fn from(error: Utf8Error) -> Self {
-        Error::Utf8Error(error)
-    }
-}
-
-impl From<FromUtf8Error> for Error {
-    fn from(error: FromUtf8Error) -> Self {
-        Error::FromUtf8Error(error)
-    }
-}
-
-impl From<FromHexError> for Error {
-    fn from(error: FromHexError) -> Self {
-        Error::FromHexError(error)
-    }
-}
-
-impl From<ParseIntError> for Error {
-    fn from(error: ParseIntError) -> Self {
-        Error::ParseIntError(error)
-    }
 }

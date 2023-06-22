@@ -16,6 +16,7 @@ hex = "0.4.3"
 rsa = "0.9.2"
 mysql_common = "0.30.5"
 wasmedge_wasi_socket = "0.5.0"
+thiserror = "1.0.40"
 
 [patch.crates-io]
 mysql_common = { git = 'https://github.com/markcty/rust_mysql_common' }
