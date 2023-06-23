@@ -29,7 +29,7 @@ impl AuthPluginSwitchCommand {
 
         let encrypted_password =
             encrypt_password(&self.password, &self.scramble, &self.auth_plugin);
-        cursor.write(&encrypted_password)?;
+        cursor.write_all(&encrypted_password)?;
 
         Ok(vec)
     }

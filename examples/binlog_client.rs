@@ -1,3 +1,5 @@
+use futures_util::pin_mut;
+use futures_util::stream::StreamExt;
 use mysql_cdc::binlog_client::BinlogClient;
 use mysql_cdc::binlog_options::BinlogOptions;
 use mysql_cdc::errors::Error;
@@ -6,7 +8,8 @@ use mysql_cdc::providers::mysql::gtid::gtid_set::GtidSet;
 use mysql_cdc::replica_options::ReplicaOptions;
 use mysql_cdc::ssl_mode::SslMode;
 
-fn main() -> Result<(), Error> {
+#[tokio::main(flavor = "current_thread")]
+async fn main() -> Result<(), Error> {
     // Start replication from MariaDB GTID
     let _options = BinlogOptions::from_mariadb_gtid(GtidList::parse("0-1-270")?);
 
@@ -28,7 +31,7 @@ fn main() -> Result<(), Error> {
 
     let options = ReplicaOptions {
         username: String::from("root"),
-        password: String::from("Qwertyu1"),
+        password: String::from("password"),
         blocking: true,
         ssl_mode: SslMode::Disabled,
         binlog: options,
@@ -37,8 +40,9 @@ fn main() -> Result<(), Error> {
 
     let mut client = BinlogClient::new(options);
 
-    for result in client.replicate()? {
-        let (header, event) = result?;
+    let events_stream = client.replicate().await?;
+    pin_mut!(events_stream);
+    while let Some(Ok((header, event))) = events_stream.next().await {
         println!("Header: {:#?}", header);
         println!("Event: {:#?}", event);
 

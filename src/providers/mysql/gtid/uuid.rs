@@ -21,7 +21,7 @@ impl Uuid {
 
     /// Parses Uuid from string representation.
     pub fn parse(uuid: String) -> Result<Self, Error> {
-        let hex = uuid.replace("-", "");
+        let hex = uuid.replace('-', "");
         let vec = hex::decode(hex)?;
 
         let mut data = [0u8; 16];

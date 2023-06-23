@@ -29,7 +29,7 @@ impl GtidSet {
             return Ok(GtidSet::new());
         }
 
-        let gtid_set = gtid_set.replace("\n", "");
+        let gtid_set = gtid_set.replace('\n', "");
         let uuid_sets = gtid_set.split(',').map(|x| x.trim()).collect::<Vec<&str>>();
 
         let mut result = HashMap::new();
@@ -63,7 +63,13 @@ impl GtidSet {
             .entry(gtid.source_id.uuid.clone())
             .or_insert(UuidSet::new(gtid.source_id.clone(), Vec::new()));
 
-        Ok(uuid_set.add_gtid(gtid)?)
+        uuid_set.add_gtid(gtid)
+    }
+}
+
+impl Default for GtidSet {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

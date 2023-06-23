@@ -98,7 +98,6 @@
 //! ```
 
 pub mod binlog_client;
-pub mod binlog_events;
 pub mod binlog_options;
 pub mod binlog_reader;
 pub mod errors;

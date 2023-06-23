@@ -5,7 +5,7 @@ use crate::packet_channel::PacketChannel;
 use crate::replica_options::ReplicaOptions;
 use crate::starting_strategy::StartingStrategy;
 
-pub fn replicate_mysql(
+pub async fn replicate_mysql(
     channel: &mut PacketChannel,
     options: &ReplicaOptions,
     server_id: u32,
@@ -17,7 +17,9 @@ pub fn replicate_mysql(
                 options.binlog.filename.clone(),
                 options.binlog.position,
             );
-            channel.write_packet(&command.serialize(&gtid_set)?, 0)?
+            channel
+                .write_packet(&command.serialize(gtid_set)?, 0)
+                .await?
         } else {
             return Err(Error::String("GtidSet was not specified".to_string()));
         }
@@ -27,7 +29,7 @@ pub fn replicate_mysql(
             options.binlog.filename.clone(),
             options.binlog.position,
         );
-        channel.write_packet(&command.serialize()?, 0)?
+        channel.write_packet(&command.serialize()?, 0).await?
     }
     Ok(())
 }

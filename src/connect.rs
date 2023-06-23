@@ -16,18 +16,19 @@ use crate::responses::response_type;
 use crate::ssl_mode::SslMode;
 
 impl BinlogClient {
-    pub fn connect(&self) -> Result<(PacketChannel, DatabaseProvider), Error> {
-        let mut channel = PacketChannel::new(&self.options)?;
-        let (packet, seq_num) = channel.read_packet()?;
+    pub async fn connect(&self) -> Result<(PacketChannel, DatabaseProvider), Error> {
+        let mut channel = PacketChannel::connect(&self.options).await?;
+        let (packet, seq_num) = channel.read_packet().await?;
         check_error_packet(&packet, "Initial handshake error.")?;
         let handshake = HandshakePacket::parse(&packet)?;
 
         let auth_plugin = self.get_auth_plugin(&handshake.auth_plugin_name)?;
-        self.authenticate(&mut channel, &handshake, auth_plugin, seq_num + 1)?;
+        self.authenticate(&mut channel, &handshake, auth_plugin, seq_num + 1)
+            .await?;
         Ok((channel, DatabaseProvider::from(&handshake.server_version)))
     }
 
-    fn authenticate(
+    async fn authenticate(
         &self,
         channel: &mut PacketChannel,
         handshake: &HandshakePacket,
@@ -44,7 +45,9 @@ impl BinlogClient {
             }
             if ssl_available {
                 let ssl_command = SslRequestCommand::new(UTF8_MB4_GENERAL_CI);
-                channel.write_packet(&ssl_command.serialize()?, seq_num)?;
+                channel
+                    .write_packet(&ssl_command.serialize()?, seq_num)
+                    .await?;
                 seq_num += 1;
                 channel.upgrade_to_ssl();
                 use_ssl = true;
@@ -53,15 +56,18 @@ impl BinlogClient {
 
         let auth_command =
             AuthenticateCommand::new(&self.options, handshake, auth_plugin, UTF8_MB4_GENERAL_CI);
-        channel.write_packet(&auth_command.serialize()?, seq_num)?;
-        let (packet, seq_num) = channel.read_packet()?;
+        channel
+            .write_packet(&auth_command.serialize()?, seq_num)
+            .await?;
+        let (packet, seq_num) = channel.read_packet().await?;
         check_error_packet(&packet, "Authentication error.")?;
 
         match packet[0] {
-            response_type::OK => return Ok(()),
+            response_type::OK => Ok(()),
             response_type::AUTH_PLUGIN_SWITCH => {
                 let switch_packet = AuthPluginSwitchPacket::parse(&packet[1..])?;
-                self.handle_auth_plugin_switch(channel, switch_packet, seq_num + 1, use_ssl)?;
+                self.handle_auth_plugin_switch(channel, switch_packet, seq_num + 1, use_ssl)
+                    .await?;
                 Ok(())
             }
             _ => {
@@ -71,13 +77,14 @@ impl BinlogClient {
                     &handshake.scramble,
                     seq_num + 1,
                     use_ssl,
-                )?;
+                )
+                .await?;
                 Ok(())
             }
         }
     }
 
-    fn handle_auth_plugin_switch(
+    async fn handle_auth_plugin_switch(
         &self,
         channel: &mut PacketChannel,
         switch_packet: AuthPluginSwitchPacket,
@@ -91,8 +98,10 @@ impl BinlogClient {
             &switch_packet.auth_plugin_name,
             auth_plugin,
         );
-        channel.write_packet(&auth_switch_command.serialize()?, seq_num)?;
-        let (packet, seq_num) = channel.read_packet()?;
+        channel
+            .write_packet(&auth_switch_command.serialize()?, seq_num)
+            .await?;
+        let (packet, seq_num) = channel.read_packet().await?;
         check_error_packet(&packet, "Authentication switch error.")?;
 
         if switch_packet.auth_plugin_name == auth_plugin_names::CACHING_SHA2_PASSWORD {
@@ -102,12 +111,13 @@ impl BinlogClient {
                 &switch_packet.auth_plugin_data,
                 seq_num + 1,
                 use_ssl,
-            )?;
+            )
+            .await?;
         }
         Ok(())
     }
 
-    fn authenticate_sha_256(
+    async fn authenticate_sha_256(
         &self,
         channel: &mut PacketChannel,
         packet: &[u8],
@@ -126,15 +136,15 @@ impl BinlogClient {
 
         // Send clear password if ssl is used.
         if use_ssl {
-            channel.write_packet(&password, seq_num)?;
-            let (packet, _seq_num) = channel.read_packet()?;
+            channel.write_packet(&password, seq_num).await?;
+            let (packet, _seq_num) = channel.read_packet().await?;
             check_error_packet(&packet, "Sending clear password error.")?;
             return Ok(());
         }
 
         // Request public key.
-        channel.write_packet(&[0x02], seq_num)?;
-        let (packet, seq_num) = channel.read_packet()?;
+        channel.write_packet(&[0x02], seq_num).await?;
+        let (packet, seq_num) = channel.read_packet().await?;
         check_error_packet(&packet, "Requesting caching_sha2_password public key.")?;
 
         // Extract public key.
@@ -148,8 +158,8 @@ impl BinlogClient {
 
         let encrypted_pass = crypto::encrypt(&password, public_key);
 
-        channel.write_packet(&encrypted_pass, seq_num + 1)?;
-        let (packet, _seq_num) = channel.read_packet()?;
+        channel.write_packet(&encrypted_pass, seq_num + 1).await?;
+        let (packet, _seq_num) = channel.read_packet().await?;
         check_error_packet(&packet, "Authentication error.")?;
         Ok(())
     }
@@ -162,6 +172,6 @@ impl BinlogClient {
             return Ok(AuthPlugin::CachingSha2Password);
         }
         let message = format!("{} auth plugin is not supported.", auth_plugin_name);
-        Err(Error::String(message.to_string()))
+        Err(Error::String(message))
     }
 }

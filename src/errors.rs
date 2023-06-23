@@ -1,4 +1,5 @@
-use std::{io, num::ParseIntError, str::Utf8Error, string::FromUtf8Error};
+use std::{num::ParseIntError, str::Utf8Error, string::FromUtf8Error};
+use tokio::io;
 
 use hex::FromHexError;
 use thiserror::Error;

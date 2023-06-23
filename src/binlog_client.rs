@@ -1,13 +1,22 @@
-use crate::binlog_events::BinlogEvents;
+use async_stream::stream;
+use futures_core::Stream;
+
+use crate::constants::checksum_type::ChecksumType;
 use crate::constants::database_provider::DatabaseProvider;
+use crate::constants::EVENT_HEADER_SIZE;
 use crate::errors::Error;
 use crate::events::binlog_event::BinlogEvent;
 use crate::events::event_header::EventHeader;
+use crate::events::event_parser::EventParser;
+use crate::packet_channel::PacketChannel;
 use crate::providers::mariadb::gtid::gtid::Gtid as MariaGtid;
 use crate::providers::mariadb::mariadb_provider::replicate_mariadb;
 use crate::providers::mysql::gtid::gtid::Gtid as MySqlGtid;
 use crate::providers::mysql::mysql_provider::replicate_mysql;
 use crate::replica_options::ReplicaOptions;
+use crate::responses::end_of_file_packet::EndOfFilePacket;
+use crate::responses::error_packet::ErrorPacket;
+use crate::responses::response_type;
 use crate::ssl_mode::SslMode;
 use crate::starting_strategy::StartingStrategy;
 
@@ -34,17 +43,19 @@ impl BinlogClient {
     }
 
     /// Replicates binlog events from the server
-    pub fn replicate(&mut self) -> Result<BinlogEvents, Error> {
-        let (mut channel, provider) = self.connect()?;
+    pub async fn replicate(
+        &mut self,
+    ) -> Result<impl Stream<Item = Result<(EventHeader, BinlogEvent), Error>>, Error> {
+        let (mut channel, provider) = self.connect().await?;
 
         // Reset on reconnect
         self.transaction = false;
         self.maria_gtid = None;
         self.mysql_gtid = None;
 
-        self.adjust_starting_position(&mut channel)?;
-        self.set_master_heartbeat(&mut channel)?;
-        let checksum = self.set_master_binlog_checksum(&mut channel)?;
+        self.adjust_starting_position(&mut channel).await?;
+        self.set_master_heartbeat(&mut channel).await?;
+        let checksum = self.set_master_binlog_checksum(&mut channel).await?;
 
         let server_id = if self.options.blocking {
             self.options.server_id
@@ -53,11 +64,54 @@ impl BinlogClient {
         };
 
         match provider {
-            DatabaseProvider::MariaDB => replicate_mariadb(&mut channel, &self.options, server_id)?,
-            DatabaseProvider::MySQL => replicate_mysql(&mut channel, &self.options, server_id)?,
+            DatabaseProvider::MariaDB => {
+                replicate_mariadb(&mut channel, &self.options, server_id).await?
+            }
+            DatabaseProvider::MySQL => {
+                replicate_mysql(&mut channel, &self.options, server_id).await?
+            }
         }
 
-        Ok(BinlogEvents::new(channel, checksum))
+        Ok(Self::binlog_events_stream(channel, checksum))
+    }
+
+    fn binlog_events_stream(
+        mut channel: PacketChannel,
+        checksum: ChecksumType,
+    ) -> impl Stream<Item = Result<(EventHeader, BinlogEvent), Error>> {
+        stream! {
+            let mut parser = EventParser::new();
+            parser.checksum_type = checksum;
+            loop {
+                let (packet, _) = match channel.read_packet().await {
+                    Ok(x) => x,
+                    Err(e) => {
+                        yield Err(Error::IoError(e));
+                        break;
+                    },
+                };
+                match packet[0] {
+                    response_type::OK => {
+                        let header = EventHeader::parse(&packet[1..])?;
+                        let event_slice = &packet[1 + EVENT_HEADER_SIZE..];
+                        let event = parser.parse_event(&header, event_slice)?;
+                        yield Ok((header, event));
+                    },
+                    response_type::ERROR => {
+                        let error = ErrorPacket::parse(&packet[1..])?;
+                        yield Err(Error::String(format!("Event stream error. {:?}", error)));
+                    },
+                    response_type::END_OF_FILE => {
+                        let _ = EndOfFilePacket::parse(&packet[1..]);
+                        yield Err(Error::String("End of file reached".to_string()));
+                        break;
+                    }
+                    _ => yield Err(Error::String(
+                        "Unknown network stream status".to_string(),
+                    )),
+                }
+            }
+        }
     }
 
     /// Updates current replication position
@@ -87,10 +141,10 @@ impl BinlogClient {
                 }
                 if x.sql_statement == "BEGIN" {
                     self.transaction = true;
-                } else if x.sql_statement == "COMMIT" || x.sql_statement == "ROLLBACK" {
-                    self.commit_gtid();
-                } else if !self.transaction {
-                    // Auto-commit query like DDL
+                } else if x.sql_statement == "COMMIT"
+                    || x.sql_statement == "ROLLBACK"
+                    || !self.transaction
+                {
                     self.commit_gtid();
                 }
             }
@@ -103,7 +157,7 @@ impl BinlogClient {
         // after we read them atomically to prevent missing mapping on reconnect.
         // Figure out something better as TableMapEvent can be followed by several row events.
         match event {
-            BinlogEvent::TableMapEvent(_) => return,
+            BinlogEvent::TableMapEvent(_) => (),
             BinlogEvent::RotateEvent(x) => {
                 self.options.binlog.filename = x.binlog_filename.clone();
                 self.options.binlog.position = x.binlog_position as u32;
