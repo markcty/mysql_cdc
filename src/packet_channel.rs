@@ -13,6 +13,7 @@ impl PacketChannel {
     pub fn new(options: &ReplicaOptions) -> Result<Self, io::Error> {
         let address: String = format!("{}:{}", options.hostname, options.port.to_string());
         let stream = TcpStream::connect(address)?;
+        stream.set_nonblocking(true);
         Ok(Self { stream })
     }
 
